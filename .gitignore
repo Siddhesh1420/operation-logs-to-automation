@@ -1,0 +1,20 @@
+# Datasets (large, provided separately)
+data/dataset_a/
+data/dataset_b/
+data/**/*.jsonl
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.png
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Scratch outputs
+scratch/*.out
+scratch/*.csv
+
+# OS
+.DS_Store
