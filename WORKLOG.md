@@ -51,4 +51,77 @@ All were caught and corrected during testing; kept in this log to document the e
 
 ---
 
-## Day 2 — TBD
+# Work Log
+
+## Day 2 — 2026-09-13
+
+### Goal
+Move from manual inspection to actual scored code on Dataset A, establish an empirical baseline against ground truth, and evaluate whether the approach transfers to production data (Dataset B) per the schema's domain shift warnings[cite: 1, 2].
+
+---
+
+### Dataset A — Benchmark & Pipeline Iteration
+
+#### What we did
+* Built a baseline boundary detector using deduplicated `app_switch` events and evaluated it using `evaluate_segmentation.py` against `gt_manifest.json` start times[cite: 1, 2].
+* Measured error types (false positives and false negatives) across multiple time-tolerance windows (2s, 5s, 10s, 15s)[cite: 1].
+* Evaluated and directly measured two content-blind heuristics for suppressing short-dwell "utility" windows:
+  1. *Dwell-time thresholding*[cite: 1].
+  2. *App-transition-graph connectivity* (measuring incoming/outgoing window hops)[cite: 1].
+* Tested generalizing shortcut motifs globally across the entire session to auto-detect same-process boundaries[cite: 1].
+* Investigated `extensions.uia_v2.target.automation_id` on L2 events and discovered structured UIA tags formatted as `{screen_prefix}-row-{case_id}` (e.g., `rt-row-RT-175009-002`)[cite: 1].
+* Built and scored two implementations across all 63 Dataset A sessions (~162,000 events):
+  1. **AID-Only (UIA Case Extractor):** Primary structural signal[cite: 1].
+  2. **Hybrid (AID + App-Switch/Motif Fallback):** Secondary fallback for non-portal spans[cite: 1, 2].
+* Fixed a text-encoding bug where Japanese string literals in portal-window exclusion filters silently matched 0 events; replaced with ASCII structural matching (`"Google Chrome"` in window titles)[cite: 1, 2].
+
+#### Key findings & Metrics
+1. **Naive app-switch baseline is weak (±2s tolerance):** Precision = 0.12, Recall = 0.44[cite: 1]. 
+2. **Dwell time & connectivity heuristics failed on direct measurement:** 
+   * Median dwell for `m1_reference-Excel` (utility app) was 11.4s, which was *higher* than the financial-system home app (7.7s)[cite: 1].
+   * Home apps showed equal or higher transition connectivity than side-reference apps[cite: 1].
+3. **Global shortcut-motif mining degraded performance:** Precision dropped to 0.09 and Recall to 0.41[cite: 1]. Mining global n-grams triggered on common short patterns across different processes rather than boundary seams[cite: 1].
+4. **Tolerance window isolates precision vs. timing issues:** Baseline recall rose from 0.44 (at ±2s) to 0.91 (at ±15s), while precision stayed low (0.12 to 0.25), proving precision is an independent structural issue[cite: 1].
+5. **UIA Case Extraction is the primary signal for Dataset A:** Extracting case IDs from `automation_id` yielded 24/32 matched cases on a sample session, all with a tight positive lag (+2.8s to +8.1s, mean 5.9s)[cite: 1].
+6. **UIA signal is process-dependent:** Missed cases (processes LA, SUP, and partial PI) spend time in Word/Excel/Notepad rather than browser portals and lack row-level `automation_id` elements[cite: 1].
+7. **Full-scale dataset evaluation (63 sessions):**
+   * **AID-Only:** Precision = 0.97, Recall = 0.83, **F1 = 0.899**[cite: 1, 2].
+   * **Hybrid:** Precision = 0.45, Recall = 0.92, **F1 = 0.607**[cite: 1, 2].
+
+#### Decisions made
+* **Adopt AID-Only as the Dataset A baseline (F1 = 0.899):** Prioritized precision (0.97) over recall (0.83) to prevent false-positive boundaries from corrupting Step 2 duration/frequency metrics[cite: 1, 2].
+* **Isolate document-centric spans:** Treat non-portal processes (LA/SUP) as a distinct, low-confidence category rather than blending in a noisy fallback[cite: 1, 2].
+
+---
+
+### Dataset B — Production Investigation & Domain Transfer
+
+#### What we did
+* Inspected layer types, event coverage, and `automation_id` structures across all 15 Dataset B sessions (~20,000 events)[cite: 1, 2].
+* Traced UI interaction patterns in Dataset B's browser events (`L3`) and OS-level UIA events (`L2`)[cite: 1].
+* Analyzed the single session lacking browser extension data[cite: 1].
+
+#### Key findings & Why Dataset A's approach FAILS on Dataset B
+1. **Case-ID Extraction Regex Fails on Dataset B:** 
+   * *Why it fails:* Dataset B's `automation_id` fields contain static screen labels (`pi-note`, `la-note`, `rt-note`) with **no embedded case-ID suffixes**[cite: 1, 2]. Dataset A's primary regex (`{prefix}-row-{case_id}`) matches zero events on Dataset B[cite: 1, 2].
+2. **Dataset B Has Active L3 Data (Opposite of Dataset A):** 
+   * *Dataset A difference:* Dataset A contained zero L3 events across all 63 sessions[cite: 1].
+   * *Dataset B reality:* 14 of 15 Dataset B sessions contain active L3 browser extension logs (`browser_click`, `browser_form_input`)[cite: 1].
+3. **Dataset B Exposes a Direct Click State-Machine Signal:** 
+   * Inspecting `payload.element.attributes.id` in `browser_click` events revealed a clean 1:1 state-machine sequence: `{screen}-note` (input field focus) followed by `btn-{screen}-ok` (submit button click) across all five production screens (`pi`, `la`, `rt`, `si`, `ob`)[cite: 1].
+4. **1 of 15 Sessions Lacks L3 Data:** 
+   * Exactly 1 session (`ses_20260701-192455-NEELA9BAF`) has zero L3 events due to an unestablished browser extension connection[cite: 1].
+   * *Why standard L3 extraction fails here:* `btn-{screen}-ok` events do not exist without L3 logging[cite: 1].
+   * *Solution:* `automation_id` still records `{screen}-note` input fields via UIA, and submit actions occur as `mouse_click` events at fixed, repeatable screen coordinates[cite: 1].
+
+#### Decisions made
+* **Architect Separate Segmenters for Dataset A and Dataset B:** 
+  * Dataset A uses UIA `automation_id` row-case parsing[cite: 1, 2].
+  * Dataset B uses an L3 DOM state-machine segmenter (`btn-{screen}-ok` submit triggers) for 14 sessions, and a UIA + coordinate-clustering fallback for the 1 non-L3 session[cite: 1, 2].
+* **Dataset A Pipeline Locked:** Mark Dataset A evaluation complete at F1 = 0.899 and focus budget on Dataset B deliverable generation[cite: 1, 2].
+
+---
+
+### AI Usage Note
+Used Claude (chat) throughout Day 2 to design detector iterations, write scoring scripts, and interpret results locally[cite: 1, 2]. One Claude-introduced bug—a portal-window filter using hardcoded Japanese string literals—silently failed (matching 0/114 events) due to text-encoding mismatches[cite: 1, 2]. Verified via a debug script and resolved by switching to ASCII-based structural matching, ensuring better generalizability[cite: 1, 2].
+
