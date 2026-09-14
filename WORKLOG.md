@@ -125,3 +125,46 @@ Move from manual inspection to actual scored code on Dataset A, establish an emp
 ### AI Usage Note
 Used Claude (chat) throughout Day 2 to design detector iterations, write scoring scripts, and interpret results locally[cite: 1, 2]. One Claude-introduced bug—a portal-window filter using hardcoded Japanese string literals—silently failed (matching 0/114 events) due to text-encoding mismatches[cite: 1, 2]. Verified via a debug script and resolved by switching to ASCII-based structural matching, ensuring better generalizability[cite: 1, 2].
 
+---
+
+## Day 3 — 2026-09-14
+
+### Goal
+Verify structural assumptions on Dataset B (interleaving checks), design and validate the Dataset B segmentation pipeline architecture, diagnose multi-host port collisions, and prepare the implementation plan for generating the production `segments.jsonl` deliverable across all 15 sessions[cite: 1, 2].
+
+---
+
+### Dataset B — Pre-Check & Pipeline Architecture
+
+#### What we did
+* **Pre-Check (State Machine Verification):** Checked whether Dataset B's `{screen}-note` click $\rightarrow$ `btn-{screen}-ok` click pattern ever interleaves (e.g., opening a second screen before submitting the first) by tracing browser events chronologically[cite: 1].
+* **Primary Segmenter Architecture (`Path 1`):** Designed the primary L3 state-machine segmenter using DOM triggers (`{screen}-note` focus start $\rightarrow$ `btn-{screen}-ok` submit end) for 14 sessions[cite: 1, 2].
+* **Global Back-Dating Mechanism:** Designed a global `_nearest_preceding_app_switch` lookback to anchor segment start timestamps to initial window focus rather than raw click timestamps, capturing crucial pre-click reading/review time[cite: 1].
+* **Non-L3 Fallback Architecture (`Path 2`):** Designed a screen-coordinate clustering pass for the 1 session lacking browser extension data (`ses_20260701-192455-NEELA9BAF`), using UIA field events and physical mouse click coordinates[cite: 1].
+* **Adversarial Bug Diagnosis:** Identified two critical scope/overlap bugs during script review:
+  1. Default argument parse crash in `_nearest_preceding_app_switch`[cite: 1].
+  2. Per-screen dictionary bounds permitting cross-screen temporal overlaps[cite: 1].
+* **Multi-Host Port Diagnosis:** Diagnosed backend port traffic across all 15 sessions, revealing that screen selectors (`la`, `ob`, `pi`, `si`) run across three distinct ports (`5132`, `5133`, `5134`)[cite: 1, 2].
+
+#### Key findings & Superior System Characteristics
+1. **Strictly Sequential State Machine:** Pre-check confirmed 0 interleaved transitions on tested sessions[cite: 1]. Every case opens and closes strictly in sequence, simplifying state tracking[cite: 1].
+2. **Global Back-Dating Prevents Truncation:** Anchoring starts to the nearest preceding application switch preserves human review/dwell time before data entry[cite: 1].
+3. **Multi-Host Collision Resolution:** Discovered that screens `la`, `ob`, `pi`, and `si` appear across ports `5132`, `5133`, and `5134`[cite: 1, 2]. Plain `{screen}` labels falsely merge separate business applications into single buckets[cite: 1, 2].
+4. **Global Temporal Bound Fix:** Replacing per-screen tracking dictionaries with a global `last_segment_end` cutoff guarantees zero cross-screen temporal overlaps across all sessions[cite: 1].
+
+#### Decisions made
+* **Adopt Host-Aware Labeling (`{port}_{screen}`):** Plan to transform plain labels into `{port}_{screen}` (e.g., `5132_pi`, `5133_pi`, `5134_pi`) during implementation to maintain process isolation for Step 2 ROI calculations[cite: 1, 2].
+* **Enforce Global Temporal Bounds:** Enforce a global `last_segment_end` state variable across all paths to eliminate cross-screen segment overlaps[cite: 1].
+
+#### Not yet done / Open questions
+* Apply the 3-line bug fix (`not_before_ts=last_segment_end` and `last_segment_end = ts`) inside `segmenter_b.py`[cite: 1].
+* Apply the `{port}_{screen}` label construction logic inside `path1_click_id_segments`[cite: 1, 2].
+* Run the systematic `context.extracted_text` vocabulary cross-check script to confirm domain separation across ports[cite: 1].
+* Execute `segments.jsonl` pipeline generation for all 15 Dataset B sessions and run the 0-overlap validator[cite: 1, 2].
+
+---
+
+### AI Usage Note
+Used Claude (chat) throughout Day 3 to design script iterations, debug variable scope issues, and analyze multi-host port distributions[cite: 1, 2]. A logic error where per-screen dictionary bounds permitted cross-screen temporal overlaps was identified during review and resolved conceptually by enforcing a unified global timestamp bound[cite: 1].
+
+---
