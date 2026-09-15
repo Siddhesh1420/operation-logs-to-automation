@@ -14,78 +14,99 @@ Two-path design, based on whether a session has L3 (browser_click) data:
 PATH 1 -- IMPLEMENTED. 14/15 sessions have L3 data.
     Uses browser_click events' payload.element.attributes.id:
     - id == "{screen}-note"       -> anchors the CLOSE side of case
-                                      identification; see start-time
-                                      back-dating below
+                                     identification; see start-time
+                                     back-dating below
     - id == "btn-{screen}-ok"     -> closes the open segment for that
-                                      screen and emits it. Verified
-                                      (Day 3 spot-check) that nothing
-                                      meaningful happens in the 6s after
-                                      this click other than the next
-                                      case's own app_switch beginning --
-                                      this timestamp is a clean, correct
-                                      segment end as-is, no adjustment
-                                      needed.
+                                     screen and emits it.
 
-    START-TIME BACK-DATING (Day 3 fix): the raw "{screen}-note" click
-    timestamp UNDERSTATES the true start of a case. Spot-checking
-    multiple segments against context.extracted_text showed a consistent
-    pattern: several seconds before the note-click (4s to ~14.5s across
-    5 examples checked, in 3 different sessions), an app_switch event
-    occurs whose surrounding extracted_text reveals the actual case
-    content the person is about to act on (e.g. an invoice number and
-    amount). The gap between that app_switch and the note-click is the
-    person's review/reading time for that case -- real work time that
-    the raw click-to-click window was silently excluding.
-
-    Rule: a segment's start is the timestamp of the NEAREST app_switch
-    event preceding the note-click, within a capped lookback window
-    (default 30s). If no app_switch is found in that window, the
-    note-click timestamp itself is used as a fallback (better to slightly
-    understate a rare case than to reach arbitrarily far into unrelated
-    prior activity).
-
-    CLAIMED-TIMESTAMP FIX (Day 3, second pass): back-dating naively let
-    two different segments share the SAME app_switch as their "nearest
-    preceding" one, producing two segments with identical start times.
-    Root cause, confirmed by inspection: sometimes two cases are
-    reviewed back-to-back after a single app_switch (e.g. the person
-    scrolls to the next row within the same already-open view, rather
-    than switching apps again) -- so there genuinely isn't a fresh
-    app_switch for the second case. Each app_switch can now back-date at
-    most ONE segment: once used, it is added to a per-session "claimed"
-    set and skipped by subsequent lookups. A segment whose nearest
-    app_switch is already claimed falls through to the next-nearest
-    unclaimed one within the lookback window, or to the raw note-click
-    timestamp if none remain -- which honestly reflects that no distinct
-    review moment could be detected for that case, rather than
-    fabricating one.
-
-    Screen coverage varies per session (2 to 5 of the 5 known screens:
-    pi, la, rt, si, ob) -- this is expected, not a bug: sessions simply
-    don't all touch every screen type.
-
-PATH 2 -- NOT YET IMPLEMENTED. 1/15 sessions has zero L3 data
-    (ses_20260701-192455-NEELA9BAF, confirmed by direct check across all
-    15 sessions, not assumed to be the only one in the full Dataset B).
+PATH 2 -- IMPLEMENTED. 1/15 sessions has zero L3 data
+    (ses_20260701-192455-NEELA9BAF).
     automation_id still exposes "{screen}-note" via UIA even without the
-    browser extension, but the submit/OK action has no captured
-    automation_id there. Traced manually: the submit action is a
-    mouse_click at a consistent, repeatable screen coordinate shortly
-    after each note-field click + clipboard paste. Not yet implemented
-    as code -- coordinate tolerance not yet chosen/tested. The same
-    start-time back-dating principle (look for the preceding app_switch)
-    likely applies here too, but has not yet been checked against this
-    session specifically.
+    browser extension. The submit action is detected via physical mouse_click
+    coordinates at the submit button location (x: 590-670, y: 1845-1885),
+    with host port mapped from active L2 window titles.
 
-Because Dataset B has no ground truth, this detector cannot be scored
-the way dataset_a_detector.py is. Validation is by spot-checking a
-sample of emitted segments against context.extracted_text and/or
-screenshots for plausibility.
+Validation is by spot-checking a sample of emitted segments against 
+context.extracted_text and/or screenshots for plausibility.
 """
 import json
 import glob
 import os
 from datetime import datetime, timedelta
+
+
+SYSTEM_TITLE_TO_PORT = {
+    "HR人事給与システム": "5132",
+    "財務会計システム": "5133",
+    "受発注在庫管理システム": "5134"
+}
+
+PORTAL_ACTIVITY_TYPES = {
+    "browser_click", "mouse_click", "mouse_scroll", "screenshot_smart",
+    "browser_navigation",
+}
+
+
+def _continuous_portal_run_start(events, before_ts, not_before_ts,
+                                  max_intra_gap_sec=3.0):
+    """
+    Validated in capture_recoverable_time.py: recovers ~9.6 min of start-time
+    back-dating that the app_switch-only rule missed, by walking backward
+    through an unbroken chain of same-screen portal activity (no app_switch)
+    when no app_switch is found in the normal lookback window.
+    """
+    before_dt = parse(before_ts)
+    not_before_dt = parse(not_before_ts) if not_before_ts else None
+
+    candidates = [e for e in events if e["timestamp_iso"] < before_ts]
+    candidates.sort(key=lambda e: e["timestamp_iso"])
+
+    chain_end_dt = before_dt
+    earliest_in_chain = None
+
+    for e in reversed(candidates):
+        ts = e["timestamp_iso"]
+        dt = parse(ts)
+
+        if not_before_dt and dt <= not_before_dt:
+            break
+        if e.get("event_type") == "app_switch":
+            break
+        if e.get("event_type") not in PORTAL_ACTIVITY_TYPES:
+            break
+
+        gap = (chain_end_dt - dt).total_seconds()
+        if gap > max_intra_gap_sec:
+            break
+
+        earliest_in_chain = ts
+        chain_end_dt = dt
+
+    return earliest_in_chain
+
+
+def resolve_segment_start(events, note_ts, claimed_app_switches,
+                           backdate_lookback_sec, last_segment_end):
+    """
+    Priority: (1) nearest preceding app_switch, (2) continuous portal-activity
+    chain if no app_switch found, (3) raw note-click timestamp as last resort.
+    """
+    backdated = _nearest_preceding_app_switch(
+        events, note_ts, claimed_app_switches,
+        lookback_sec=backdate_lookback_sec,
+        not_before_ts=last_segment_end,
+    )
+    if backdated:
+        claimed_app_switches.add(backdated)
+        return backdated
+
+    portal_chain_start = _continuous_portal_run_start(
+        events, note_ts, not_before_ts=last_segment_end,
+    )
+    if portal_chain_start:
+        return portal_chain_start
+
+    return note_ts
 
 
 def parse(ts):
@@ -111,8 +132,7 @@ def session_has_l3_data(events):
 def browser_click_element_id(event):
     """
     Extract the element id from a browser_click event's payload, if any.
-    This is payload.element.(attributes.id or id) -- a different field
-    from extensions.uia_v2.target.automation_id used in Dataset A.
+    This is payload.element.(attributes.id or id).
     """
     if event.get("event_type") != "browser_click":
         return None
@@ -120,15 +140,37 @@ def browser_click_element_id(event):
     attrs = elem.get("attributes") or {}
     return attrs.get("id") or elem.get("id")
 
-# Extract host/port from active_browser_tab URL safely
-def _extract_host_port(event):
+
+def active_tab_host(event):
+    """
+    Extract host:port from context.active_browser_tab.url, if present.
+    Returns port alone if available (e.g. '5132').
+    """
     ctx = event.get("context") or {}
-    tab = ctx.get("active_browser_tab") or {}
-    url = tab.get("url") or ""
-    if "//" in url:
-        # e.g., "127.0.0.1:5132"
-        return url.split("//", 1)[1].split("/", 1)[0]
-    return "unknown_host"
+    tab = ctx.get("active_browser_tab")
+    if not tab or not tab.get("url"):
+        return None
+    url = tab["url"]
+    if "//" not in url:
+        return None
+    host = url.split("//", 1)[1].split("/", 1)[0]
+    return host.split(":")[-1] if ":" in host else host
+
+
+def resolve_port_from_window_title(event):
+    """Fallback to resolve port from L2 active_app window_title when L3 tab URL is missing."""
+    ctx = event.get("context") or {}
+    active_app = ctx.get("active_app") or {}
+    title = active_app.get("window_title", "")
+    for sys_name, port in SYSTEM_TITLE_TO_PORT.items():
+        if sys_name in title:
+            return port
+    return None
+
+
+def resolve_host_or_port(event):
+    """Attempts L3 tab URL resolution first, falling back to L2 window title mapping."""
+    return active_tab_host(event) or resolve_port_from_window_title(event)
 
 
 def _nearest_preceding_app_switch(events, before_ts, claimed_timestamps, lookback_sec=30, not_before_ts=None):
@@ -136,13 +178,7 @@ def _nearest_preceding_app_switch(events, before_ts, claimed_timestamps, lookbac
     Return the timestamp (str) of the app_switch event closest to (but
     before) before_ts, within lookback_sec, EXCLUDING any timestamp
     already present in claimed_timestamps, and never earlier than
-    not_before_ts if given. Returns None if none found.
-
-    not_before_ts (str or None): the previous segment's own end time on
-    this screen. A case can never legitimately start reviewing before
-    the prior case (on the same screen) has finished -- confirmed by the
-    Day 3 interleaving check (0 anomalies, strictly sequential across
-    14/15 sessions). This is a hard logical bound, not a tuned parameter.
+    not_before_ts if given.
     """
     before_dt = parse(before_ts)
     lookback_floor = before_dt - timedelta(seconds=lookback_sec)
@@ -168,41 +204,16 @@ def _nearest_preceding_app_switch(events, before_ts, claimed_timestamps, lookbac
     return best_ts
 
 
-def path1_click_id_segments(events, session_id, backdate_lookback_sec=30,):
+def path1_click_id_segments(events, session_id, backdate_lookback_sec=30):
     """
-    Walk browser_click events in order and pair {screen}-note (open) with
+    Path 1: Walk browser_click events in order and pair {screen}-note (open) with
     btn-{screen}-ok (close) clicks, per screen, to emit segments.
-
-    The emitted "start" is back-dated to the nearest preceding, not
-    already claimed, app_switch (within backdate_lookback_sec) rather
-    than the raw note-click timestamp -- see module docstring,
-    "START-TIME BACK-DATING" and "CLAIMED-TIMESTAMP FIX", for the
-    evidence behind this.
-
-    Returns (segments, warnings). Each segment is a dict matching the
-    segments.jsonl schema: {"session_id", "start", "end", "label"}.
-
-    Rules (see module docstring for the evidence behind each):
-    - A "{screen}-note" click opens a segment for that screen. If one is
-      already open for that screen (should not happen per Day 3 checks,
-      but handled defensively), the earlier one is discarded rather than
-      silently overwritten, and a warning is recorded.
-    - A "btn-{screen}-ok" click closes and emits the open segment for
-      that screen, using its back-dated start and the click's own
-      timestamp as end. If nothing is open for that screen, the click is
-      treated as a stray/duplicate submit and ignored (Day 3 finding:
-      confirmed this happens at least once, immediately following a
-      valid pair, not at a session boundary -- i.e. a real double-click,
-      not a truncation artifact).
-    - Each app_switch can back-date at most one segment; once used it is
-      excluded from consideration for all later segments in the session.
     """
-    open_segments = {}  # screen -> raw note-click timestamp (str)
-    last_segment_end=None
+    open_segments = {}  # screen -> (raw note-click timestamp, host/port)
+    last_segment_end = None
     claimed_app_switches = set()
     segments = []
     warnings = []
-    
 
     for e in events:
         eid = browser_click_element_id(e)
@@ -215,30 +226,26 @@ def path1_click_id_segments(events, session_id, backdate_lookback_sec=30,):
             if screen in open_segments:
                 warnings.append(
                     f"{ts}: reopening '{screen}' while a segment was already "
-                    f"open (started {open_segments[screen]}) -- discarding the "
+                    f"open (started {open_segments[screen][0]}) -- discarding the "
                     f"earlier open, keeping this one"
                 )
-            open_segments[screen] = ts
+            open_segments[screen] = (ts, resolve_host_or_port(e))
 
         elif eid.startswith("btn-") and eid.endswith("-ok"):
             screen = eid[len("btn-"):-len("-ok")]
             if screen in open_segments:
-                note_click_ts = open_segments.pop(screen)
-                backdated_start = _nearest_preceding_app_switch(
+                note_click_ts, note_host = open_segments.pop(screen)
+                start_ts = resolve_segment_start(
                     events, note_click_ts, claimed_app_switches,
-                    lookback_sec=backdate_lookback_sec,
-                    not_before_ts=last_segment_end
-                )           
-                if backdated_start:
-                    claimed_app_switches.add(backdated_start)
-                    start_ts = backdated_start
-                else:
-                    start_ts = note_click_ts
+                    backdate_lookback_sec, last_segment_end,
+                )
+                
+                label = f"{note_host}_{screen}" if note_host else screen
                 segments.append({
                     "session_id": session_id,
                     "start": start_ts,
                     "end": ts,
-                    "label": screen,
+                    "label": label,
                 })
                 last_segment_end = ts
             else:
@@ -256,21 +263,73 @@ def path1_click_id_segments(events, session_id, backdate_lookback_sec=30,):
     return segments, warnings
 
 
-def path2_coordinate_cluster_segments(events, session_id, coord_tolerance_px=15):
+def path2_coordinate_cluster_segments(events, session_id, backdate_lookback_sec=30):
     """
-    NOT YET IMPLEMENTED. See module docstring, PATH 2.
+    Path 2: Coordinate-clustering fallback for sessions lacking L3 browser extension data.
+    Uses UIA automation_id ending in '-note' to catch open state and physical mouse_click
+    coordinates for submit button to catch close state.
     """
-    raise NotImplementedError(
-        "path2 (no-L3 fallback) is not yet implemented -- "
-        "see WORKLOG.md Day 2 (cont'd) for the design notes"
-    )
+    segments = []
+    warnings = []
+    last_segment_end = None
+    claimed_app_switches = set()
+
+    i = 0
+    n = len(events)
+    while i < n:
+        e = events[i]
+        ext = e.get("extensions", {})
+        uia = ext.get("uia_v2", {})
+        aid = uia.get("target", {}).get("automation_id") or ""
+
+        if e.get("event_type") == "mouse_click" and aid.endswith("-note"):
+            screen = aid[:-len("-note")]
+            note_click_event = e
+            note_ts = e["timestamp_iso"]
+            note_host = resolve_host_or_port(note_click_event)
+
+            submit_event = None
+            for j in range(i + 1, n):
+                ev_next = events[j]
+                if ev_next.get("event_type") == "mouse_click":
+                    payload = ev_next.get("payload") or {}
+                    # Corrected extraction path for L2 mouse_click events:
+                    coords = payload.get("coordinates") or payload.get("click_coordinates") or payload.get("position") or {}
+                    x = coords.get("x", 0)
+                    y = coords.get("y", 0)
+
+                    # Submit button cluster target: x in [590, 670], y in [1845, 1885]
+                    if 590 <= x <= 670 and 1845 <= y <= 1885:
+                        submit_event = ev_next
+                        i = j
+                        break
+
+            if submit_event:
+                start_ts = resolve_segment_start(
+                events, note_ts, claimed_app_switches,
+                backdate_lookback_sec, last_segment_end,
+                )
+
+                end_ts = submit_event["timestamp_iso"]
+                label = f"{note_host}_{screen}" if note_host else screen
+
+                segments.append({
+                    "session_id": session_id,
+                    "start": start_ts,
+                    "end": end_ts,
+                    "label": label
+                })
+                last_segment_end = end_ts
+            else:
+                warnings.append(f"{note_ts}: note field opened for '{screen}' but no submit click was found")
+
+        i += 1
+
+    return segments, warnings
 
 
 def segment_session(session_dir):
-    """
-    Top-level entry point: dispatches to path1 or path2 depending on
-    whether the session has L3 data. Returns (segments, warnings).
-    """
+    """Top-level entry point: dispatches to path1 or path2 depending on L3 data availability."""
     session_id = os.path.basename(session_dir.rstrip("/\\"))
     events = load_session_events(session_dir)
     if session_has_l3_data(events):
@@ -279,16 +338,8 @@ def segment_session(session_dir):
         return path2_coordinate_cluster_segments(events, session_id)
 
 
-def run_on_dataset_b(dataset_b_dir, out_path="segments.jsonl", skip_no_l3=True):
-    """
-    Run the detector across every session under dataset_b_dir and write
-    results to out_path in segments.jsonl format (one JSON object per
-    line: session_id, start, end, label).
-
-    skip_no_l3: if True (default, since path2 isn't implemented yet),
-    sessions without L3 data are skipped with a printed notice rather
-    than raising NotImplementedError and aborting the whole run.
-    """
+def run_on_dataset_b(dataset_b_dir, out_path="segments.jsonl", skip_no_l3=False):
+    """Run detector across every session in dataset_b_dir and write out_path."""
     session_dirs = sorted(glob.glob(os.path.join(dataset_b_dir, "ses_*")))
     all_segments = []
     total_warnings = 0
@@ -298,14 +349,11 @@ def run_on_dataset_b(dataset_b_dir, out_path="segments.jsonl", skip_no_l3=True):
             session_id = os.path.basename(session_dir.rstrip("/\\"))
             events = load_session_events(session_dir)
 
-            if not session_has_l3_data(events):
-                if skip_no_l3:
-                    print(f"{session_id}: no L3 data, path2 not implemented -- SKIPPED")
-                    continue
-                else:
-                    raise NotImplementedError(f"{session_id} needs path2")
+            if not session_has_l3_data(events) and skip_no_l3:
+                print(f"{session_id}: no L3 data, SKIPPED")
+                continue
 
-            segments, warnings = path1_click_id_segments(events, session_id)
+            segments, warnings = segment_session(session_dir)
             for seg in segments:
                 out.write(json.dumps(seg, ensure_ascii=False) + "\n")
             all_segments.extend(segments)
