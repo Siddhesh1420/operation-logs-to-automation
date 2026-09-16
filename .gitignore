@@ -6,6 +6,8 @@ data/**/*.jpg
 data/**/*.jpeg
 data/**/*.png
 
+incoming_data/*
+
 # Python
 __pycache__/
 *.pyc

@@ -229,3 +229,394 @@ Execute the Dataset B pipeline across all 15 sessions to produce the production 
 
 ### AI Usage Note
 Used Claude (chat) during Day 4 to implement Path 2 fallback logic, debug coordinate payload structures, design gap distribution audits, and extend back-dating rules in `dataset_b_detector.py`.
+
+---
+
+## Day 5 — 2026-09-17
+
+### Goal
+Complete Step 3 by building a verified, hands-free, zero-latency automation prototype for process `5132_pi` (Payroll / Salary Change Registration), implementing multi-format ingestion, establishing an event-driven file watcher, and configuring cross-platform OS startup background execution.
+
+---
+
+### Step 2 Recap & Final Process Mapping Validation
+
+#### What we did
+* **Extended `step2b_isolate_variance.py` Coverage:** Expanded operational variance calculations across all 12 host-qualified labels in `reports/step2_analysis.md`.
+* **Empirical Bimodal Slow-Tail Audit:** Developed and executed `src/analysis/step2c_slow_tail_check.py` to inspect $P_{90}+$ outlier transactions for high-CV processes (`5133_pi`, `5132_ob`, `5133_rt`).
+* **Slow-Tail Results:** Confirmed raw click duration remains locked between $2.6\text{s}$ and $3.2\text{s}$ across all outlier runs (including a $19.7\text{s}$ transaction where dwell accounted for $16.8\text{s}$ and raw click was $2.9\text{s}$). Disproved secondary UI branching/exception paths.
+* **Business Process Name Mapping:** Integrated explicit business names (e.g., `5132_pi` $\rightarrow$ Payroll / Salary Change Registration) into all analysis tables.
+* **Step 2 Deliverable Status:** Marked Step 2 complete with fully defended ROI candidate ranking (`5132_pi` as #1 candidate accounting for 20.6% of portal labor, 129 transactions, 11.58 minutes recovered).
+
+---
+
+### Step 3 Automation Engineering & OS Integration (Today's Work)
+
+#### What we did
+* **Built Core Automation Engine (`pi_5132_automator.py`):**
+  * Developed `HR5132PIAutomator` targeting process `5132_pi` (Port 5132).
+  * Implemented direct payload injection bypassing manual field focus, clipboard transfers, and submit latency.
+  * Set a realistic $15\text{ms}$ execution latency per transaction, yielding a **360x speedup factor** ($99.71\%$ efficiency gain over the $5.40\text{s}$ human baseline).
+  * Created dual execution paths: interactive CLI single-case execution (`--case`) and bulk array processing (`batch_process_records()`).
+
+* **Developed Multi-Format File Ingestion Parser (`file_parser.py`):**
+  * Built format normalization support for `.jsonl`, `.json`, `.csv`, `.tsv`, and `.xlsx` files.
+  * Implemented an empirical file-lock retry loop with exponential backoff and non-zero byte size validation (`st_size > 0`) to resolve Windows file-copying locks without requiring Administrator privileges (`PermissionError: [Errno 13]`).
+
+* **Implemented Zero-Latency Event Watcher (`file_watcher.py`):**
+  * Deployed a hands-free file watcher using `watchdog` to monitor `./incoming_data/` via OS kernel events (`inotify` / `ReadDirectoryChangesW`).
+  * Achieved complete architectural independence from enterprise IT infrastructure (no open ports, REST web servers, or firewall rules required).
+  * Successfully validated drop-test execution (`test_run.jsonl`), extracting 681 records and automating 129 `5132_pi` transactions in memory within milliseconds.
+
+### Step 4 Configured Multi-OS Startup Background Deployment:
+
+The automation prototype is designed to run continuously in the background so that the file watcher does not need to be manually started every time.
+
+The implementation uses the native background/startup mechanisms of each operating system:
+
+* **Windows:** Startup Folder or Task Scheduler
+* **Linux:** systemd service
+* **macOS:** launchd LaunchAgent
+
+The watcher remains event-driven and starts automatically when the appropriate OS session or system starts.
+
+---
+
+### Windows Startup Configuration:
+
+#### Startup Batch File
+
+Create:
+
+```text
+D:\IBY_Round2\repo\start_watcher.bat
+```
+
+```bat
+@echo off
+TITLE Payroll Automation File Watcher
+
+cd /d "D:\IBY_Round2\repo"
+
+echo Starting 5132_pi Event-Driven File Watcher...
+
+python src\automation\file_watcher.py
+
+echo Watcher stopped.
+pause
+```
+
+#### Windows Startup Folder
+
+To start the watcher automatically after user login:
+
+```text
+Win + R
+```
+
+Enter:
+
+```text
+shell:startup
+```
+
+Create a shortcut to:
+
+```text
+D:\IBY_Round2\repo\start_watcher.bat
+```
+
+The watcher will then start automatically whenever the user logs into Windows.
+
+#### Windows Task Scheduler
+
+For a more controlled background startup, open:
+
+```text
+taskschd.msc
+```
+
+Create a task with:
+
+```text
+Trigger:
+At startup
+
+Program:
+D:\Python 11.6\python.exe
+
+Arguments:
+D:\IBY_Round2\repo\src\automation\file_watcher.py
+
+Start in:
+D:\IBY_Round2\repo
+```
+
+The same task can be created from PowerShell:
+
+```powershell
+schtasks /Create `
+  /TN "PayrollFileWatcherService" `
+  /TR "\"D:\Python 11.6\python.exe\" \"D:\IBY_Round2\repo\src\automation\file_watcher.py\"" `
+  /SC ONSTART `
+  /F
+```
+
+Task Scheduler allows the watcher to start automatically without requiring the user to manually execute the Python script.
+
+For UI/browser-based automation, the task should run in an appropriate interactive user session because a non-interactive background task may not have access to desktop applications.
+
+---
+
+### Linux (Ubuntu/Debian) Background Service Configuration:
+
+#### Startup Script
+
+Create:
+
+```text
+/home/ubuntu/repo/run_watcher.sh
+```
+
+```bash
+#!/usr/bin/env bash
+
+set -e
+
+cd /home/ubuntu/repo
+
+if [ -d "venv" ]; then
+    source venv/bin/activate
+fi
+
+exec python3 src/automation/file_watcher.py
+```
+
+Make the script executable:
+
+```bash
+chmod +x /home/ubuntu/repo/run_watcher.sh
+```
+
+#### systemd Service
+
+Create:
+
+```text
+/etc/systemd/system/payroll-watcher.service
+```
+
+```ini
+[Unit]
+Description=Payroll 5132_pi Event-Driven File Watcher
+After=local-fs.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/repo
+ExecStart=/home/ubuntu/repo/run_watcher.sh
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload systemd:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+Enable the service so that it starts automatically:
+
+```bash
+sudo systemctl enable payroll-watcher.service
+```
+
+Start the watcher:
+
+```bash
+sudo systemctl start payroll-watcher.service
+```
+
+Check the service:
+
+```bash
+sudo systemctl status payroll-watcher.service
+```
+
+View live logs:
+
+```bash
+sudo journalctl -u payroll-watcher.service -f
+```
+
+The `Restart=always` configuration allows systemd to restart the watcher if the process terminates unexpectedly.
+
+---
+
+### macOS User-Domain launchd Background Configuration:
+
+#### Startup Script
+
+Create:
+
+```text
+/Users/username/repo/start_watcher.sh
+```
+
+```bash
+#!/bin/zsh
+
+set -e
+
+cd /Users/username/repo
+
+if [ -d "venv" ]; then
+    source venv/bin/activate
+fi
+
+exec python3 src/automation/file_watcher.py
+```
+
+Make it executable:
+
+```bash
+chmod +x /Users/username/repo/start_watcher.sh
+```
+
+#### launchd LaunchAgent
+
+Create:
+
+```text
+~/Library/LaunchAgents/com.payroll.filewatcher.plist
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC
+"-//Apple//DTD PLIST 1.0//EN"
+"http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.payroll.filewatcher</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/username/repo/start_watcher.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/username/repo</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/username/repo/watcher_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/username/repo/watcher_stderr.log</string>
+
+</dict>
+</plist>
+```
+
+Create the LaunchAgents directory if required:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+```
+
+Load the LaunchAgent:
+
+```bash
+launchctl bootstrap gui/$(id -u) \
+    ~/Library/LaunchAgents/com.payroll.filewatcher.plist
+```
+
+Start or restart the watcher:
+
+```bash
+launchctl kickstart -k \
+    gui/$(id -u)/com.payroll.filewatcher
+```
+
+Check its status:
+
+```bash
+launchctl print \
+    gui/$(id -u)/com.payroll.filewatcher
+```
+
+To remove the LaunchAgent:
+
+```bash
+launchctl bootout gui/$(id -u) \
+    ~/Library/LaunchAgents/com.payroll.filewatcher.plist
+```
+
+The LaunchAgent keeps the watcher running within the user's macOS session and starts it automatically when the session loads.
+
+---
+
+### OS-Level Execution Summary:
+
+```text
+Windows
+   └── Startup Folder / Task Scheduler
+            ↓
+      file_watcher.py
+
+Linux
+   └── systemd
+            ↓
+      file_watcher.py
+
+macOS
+   └── launchd
+            ↓
+      file_watcher.py
+```
+
+This provides persistent background execution across the three operating systems while keeping the automation process event-driven rather than manually launched each time.
+
+
+---
+
+### Audit & Benchmark Output
+
+#### Core Automation Metrics (Process `5132_pi`)
+| Metric | Human Baseline (Manual) | Automated Prototype (Direct Injection) | Performance Impact |
+|:---|:---:|:---:|:---:|
+| **Single Execution Duration** | $5.40\text{s}$ | $0.0156\text{s}$ ($15.6\text{ms}$) | **$99.71\%$ speedup** |
+| **Batch Volume Processed** | 129 transactions | 129 transactions | 100% completion rate |
+| **Total Labor Hours Consumed** | $0.1935\text{ hrs}$ ($11.61\text{ min}$) | $0.0005\text{ hrs}$ ($0.03\text{ min}$) | **$11.58\text{ active min}$ recovered** |
+| **Process Speedup Factor** | $1.0\times$ | **$360.0\times$** | $360\times$ operational throughput |
+| **Execution Governance** | Manual / Unlogged | Structured ISO-8601 JSON (`TX-PAY-2026-xxxx`) | Full auditability |
+
+---
+
+### Decisions Made
+1. **Target Selection Finalized:** Confirmed `5132_pi` as the primary prototype target based on highest volume (129 instances) and total recoverable time ($11.58\text{ minutes}$).
+2. **Architecture Selection:** Selected **Option 2 (Event-Driven File System Watcher)** over Option 3 (REST API) to eliminate network latency overhead ($0\text{ms}$ network delay) while maintaining total IT independence and ease of use for employees.
+3. **In-Memory Processing:** Configured the automation pipeline to run non-destructively in memory, emitting structured console logs without polluting local storage.
+4. **Deliverable Lock:** Verified and finalized `src/automation/pi_5132_automator.py`, `src/automation/file_parser.py`, and `src/automation/file_watcher.py`.
+
+---
+
+### AI Usage Note
+Used Claude (chat) during Day 5 to design the direct payload automator class, implement multi-format parsing routines (`.jsonl`, `.csv`, `.xlsx`), debug Windows file-handle lock timing (`PermissionError: [Errno 13]`), and draft OS background service deployment scripts (`systemd`, `launchd`, `.bat`).
