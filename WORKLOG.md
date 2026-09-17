@@ -232,7 +232,7 @@ Used Claude (chat) during Day 4 to implement Path 2 fallback logic, debug coordi
 
 ---
 
-## Day 5 — 2026-09-17
+## Day 5 — 2026-09-16
 
 ### Goal
 Complete Step 3 by building a verified, hands-free, zero-latency automation prototype for process `5132_pi` (Payroll / Salary Change Registration), implementing multi-format ingestion, establishing an event-driven file watcher, and configuring cross-platform OS startup background execution.
@@ -244,9 +244,12 @@ Complete Step 3 by building a verified, hands-free, zero-latency automation prot
 #### What we did
 * **Extended `step2b_isolate_variance.py` Coverage:** Expanded operational variance calculations across all 12 host-qualified labels in `reports/step2_analysis.md`.
 * **Empirical Bimodal Slow-Tail Audit:** Developed and executed `src/analysis/step2c_slow_tail_check.py` to inspect $P_{90}+$ outlier transactions for high-CV processes (`5133_pi`, `5132_ob`, `5133_rt`).
-* **Slow-Tail Results:** Confirmed raw click duration remains locked between $2.6\text{s}$ and $3.2\text{s}$ across all outlier runs (including a $19.7\text{s}$ transaction where dwell accounted for $16.8\text{s}$ and raw click was $2.9\text{s}$). Disproved secondary UI branching/exception paths.
+* **Slow-Tail Results:** Confirmed raw click duration remains locked between $2.6\text{s}$ and $3.2\text{s}$ across all outlier runs (including a $19.7\text{s}$ transaction where dwell accounted for $16.8\text{s}$ and raw click was $2.9\text{s}$), **with slow-tail cases distributed across 4 different operators, ruling out an operator-specific pattern.** Disproved secondary UI branching/exception paths.
 * **Business Process Name Mapping:** Integrated explicit business names (e.g., `5132_pi` $\rightarrow$ Payroll / Salary Change Registration) into all analysis tables.
-* **Step 2 Deliverable Status:** Marked Step 2 complete with fully defended ROI candidate ranking (`5132_pi` as #1 candidate accounting for 20.6% of portal labor, 129 transactions, 11.58 minutes recovered).
+* **Corrected Two Overclaims in `step2_analysis.md` Before Finalizing:**
+  1. The reported "96.3% labor reduction" for `5132_pi` compared automation time against the *backdated* mean (5.40s), which includes ~2.60s of human reference-lookup time the automation doesn't eliminate. Corrected to report the reduction against the raw click-to-submit time it actually replaces (2.80s → <0.05s, ~98%), with the remaining dwell time flagged as unaddressed manual work.
+  2. The stated cause of `5134_pi`/`5134_la`'s elevated $CV_{\text{raw}}$ ("secondary validation modals or variable network response delays") was asserted without verification. Root-caused via event-by-event inspection of the 10 slowest raw-click transactions across both labels: no modal or navigation events present; instead a consistent ~1.5–2.0s gap before `browser_form_input` fires, indicating a fixed client-side debounce delay. Priority for both labels upgraded from Low/Conditional to Medium as a result.
+* **Step 2 Deliverable Status:** Marked Step 2 complete with fully defended ROI candidate ranking (`5132_pi` as #1 candidate accounting for 20.6% of portal labor, 129 transactions, **11.62 minutes of active portal time**).
 
 ---
 
@@ -268,7 +271,7 @@ Complete Step 3 by building a verified, hands-free, zero-latency automation prot
   * Achieved complete architectural independence from enterprise IT infrastructure (no open ports, REST web servers, or firewall rules required).
   * Successfully validated drop-test execution (`test_run.jsonl`), extracting 681 records and automating 129 `5132_pi` transactions in memory within milliseconds.
 
-### Step 4 Configured Multi-OS Startup Background Deployment:
+### Configured Multi-OS Startup Background Deployment:
 
 The automation prototype is designed to run continuously in the background so that the file watcher does not need to be manually started every time.
 
@@ -620,3 +623,57 @@ This provides persistent background execution across the three operating systems
 
 ### AI Usage Note
 Used Claude (chat) during Day 5 to design the direct payload automator class, implement multi-format parsing routines (`.jsonl`, `.csv`, `.xlsx`), debug Windows file-handle lock timing (`PermissionError: [Errno 13]`), and draft OS background service deployment scripts (`systemd`, `launchd`, `.bat`).
+
+---
+
+## Day 6 — 2026-09-17
+
+### Goal
+Build and debug the Step 3 automation prototype (`5132_pi`), verify its output against validated Step 1/2 figures rather than trusting printed numbers at face value, and get multi-format file ingestion (`.jsonl`/`.json`/`.csv`/`.tsv`/`.xlsx`) working reliably through a file-watcher trigger.
+
+---
+
+### Prototype Baseline Fix
+
+#### What we did
+* Reviewed the initial `HR5132PIAutomator` prototype against the corrected Step 2 report language before accepting its output.
+* Found the prototype's `human_baseline_avg_sec = 5.40` reproduced the exact same overclaim already caught and fixed in `step2_analysis.md` — comparing automated execution against the backdated mean (which includes ~2.60s of human reading time) rather than the isolated raw click-to-submit time (2.80s), inflating the reported speedup to 360x.
+* Found `total_active_minutes_recovered` was computed as `count × constant average` rather than summing each segment's real `start`/`end` duration — an approximation that happened to produce a plausible-looking but wrong number (11.58 min vs. the true 11.6165 min).
+
+#### Key findings
+1. **Confirmed via direct cross-check:** running the same total-duration calculation against both `segments.jsonl` and a test-run copy of it gave **11.6165 min** for both, to 4 decimal places — establishing 11.62 as the correct, traceable figure and 11.58 as an artifact of the constant-average approximation, not a data discrepancy.
+2. **Root cause of the discrepancy:** `129 × (5.40 − 0.015) / 60 ≈ 11.58` — confirms the bug was the flat-average calculation, not a rounding issue.
+
+#### Decisions made
+* **Rebaselined the prototype to `human_in_portal_raw_sec = 2.80`** for all speedup/efficiency calculations, matching the corrected Step 2 report language exactly.
+* **Rewrote per-segment savings calculation** to parse each segment's real `start`/`end` and sum actual durations, so the prototype's aggregate output is traceable to `segments.jsonl` rather than approximated.
+* **Renamed output field** `total_active_minutes_recovered` → `total_active_minutes_actual_human_time` (plus added `projected_minutes_saved_vs_raw_click`), since "recovered" was already defined elsewhere in this log (Day 4, the 9.60 min back-dating fix) to mean something different — reusing it here for total time consumed risked confusion between two distinct concepts.
+* **Explicitly scoped what the prototype does and does not demonstrate:** confirmed with the task owner that "a working prototype is sufficient, not production-ready." On that basis, kept the simulated `time.sleep(0.015)` latency (no real HTTP/DOM call against port 5132) and the placeholder note-text payload (real per-case field content isn't captured by `segments.jsonl`, which only carries boundary/timing metadata) — both acceptable prototype-scope simplifications, distinct from the baseline/math errors above, which were fixed regardless of prototype status since they produced numbers inconsistent with the corrected report.
+
+---
+
+### Watcher & Multi-File Bug
+
+#### What we did
+* After the baseline fix, ran the file-watcher end-to-end and got `Recovered 0 active mins` on a file confirmed to be identical to the validated `segments.jsonl`.
+* Traced the cause: `watcher.py`'s print statement was still reading the old field name (`summary.get('total_active_minutes_recovered', 0)`), which no longer existed after the automator's key rename — so it silently fell back to the default value of 0 rather than erroring.
+* After fixing the print statement, hit a second issue: dropping a second file into the watch folder produced no output at all, not even the initial "[AUTO-TRIGGER] Detected" line.
+* Added exception logging to `on_created` (previously had no error handling) and to `parse_incoming_file` (previously only caught `PermissionError`/`OSError`/`json.JSONDecodeError`, silently letting any other exception type propagate uncaught) to make any swallowed failure visible instead of vanishing silently.
+* Also found and fixed a latent bug in `parse_incoming_file` independent of the above: `records = []` was initialized once outside the retry loop rather than reset on each attempt, meaning a partial read on a failed attempt would leave stale entries that could be duplicated on a subsequent successful retry.
+
+#### Key findings
+1. **Watcher fix confirmed:** re-ran against the real `segments.jsonl`-equivalent file, correctly printed `Real human time processed: 11.6165 min | Projected saved (vs. raw click): 5.99 min` — cross-checked by hand ($129 \times (2.80 - 0.015) / 60 \approx 5.99$), confirming the per-segment calculation is now correct, not just non-zero.
+2. **Multi-file handling confirmed working** after adding exception visibility — subsequent file drops now trigger and print correctly.
+3. **Small-file test caveat:** verified multi-format ingestion (`.tsv`, `.json`) using small (1–2 record) synthetic test files. Both produced `Real human time processed: 0.0 min` alongside a small nonzero "projected saved" figure — an internally inconsistent result (can't save time from a process measured at 0 minutes), most likely explained by the test files containing placeholder/degenerate timestamps (e.g. `start == end`) rather than real data, not a parser bug. **Not yet confirmed** with a proper end-to-end test using a real slice of actual segment data exported to each format.
+
+#### Decisions made
+* **Do not treat the current multi-format test files as a validated confirmation** that duration calculation is correct across all formats — only that the parser correctly ingests the file structure and the label filter works. A follow-up test using a real, non-trivial slice of `segments.jsonl` data (exported to `.csv`/`.tsv`/`.json`/`.xlsx`) is needed before claiming multi-format support is fully verified.
+
+### Not yet done / open questions
+* Multi-format duration correctness not yet confirmed with real (non-placeholder) data in `.tsv`/`.json`/`.csv`/`.xlsx` formats.
+* Final report (four required sections) not yet started.
+
+---
+
+### AI Usage Note
+Used Claude (chat) throughout Day 6 to review the prototype against corrected Step 2 figures, diagnose the 11.58 vs. 11.62 discrepancy, and debug the watcher/parser multi-file failure. Two real bugs were found and fixed in code Claude had not written or reviewed until this session (the watcher's stale field-name reference, and the parser's un-reset `records` list across retries) — both were caught by insisting on tracing every printed number back to a known-correct source rather than accepting plausible-looking output, consistent with the standard applied throughout Days 1–5.

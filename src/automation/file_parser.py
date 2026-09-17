@@ -13,19 +13,20 @@ def parse_incoming_file(
 
   for attempt in range(retries):
     try:
-      # Wait if the file is still 0 bytes (Windows copy buffer lag)
+      # Wait if file size is zero (Windows write buffer latency)
       if path.stat().st_size == 0:
         time.sleep(delay)
         continue
 
+      # Use 'utf-8-sig' to automatically strip Windows UTF-8 BOM headers
       if path.suffix == ".jsonl":
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
           for line in f:
             if line.strip():
               records.append(json.loads(line))
 
       elif path.suffix == ".json":
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
           data = json.load(f)
           records = data if isinstance(data, list) else [data]
 
@@ -44,7 +45,8 @@ def parse_incoming_file(
       if records:
         return records
 
-    except (PermissionError, OSError):
+    except (PermissionError, OSError, json.JSONDecodeError):
+      # If file is mid-write, retry backoff
       time.sleep(delay)
 
   return records

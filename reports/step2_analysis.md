@@ -49,6 +49,16 @@ Aggregating metrics by backend port isolates enterprise system dependencies:
 
 ---
 
+## 3a. Operator Headcount — Data Limitation
+
+The task asks how many people are involved in these processes. This cannot be reliably determined from Dataset B.
+
+The available identity fields (`machine_id`, `username_hash`) identify the **data-collection device**, not verified client staff. A single machine could be shared across shifts by multiple people, or one person could use multiple machines, and neither can be distinguished from the event logs alone — there is no login/authentication event, employee ID, or session-owner field in the schema that ties a session to a specific verified individual.
+
+**What can be stated:** the dataset contains 15 recording sessions across what appear to be 4 distinct machine/session-name identifiers (`CHAITANYA0BCF`, `SIDDHIGUPTAB00B`, `NEELA9BAF`, `LAPTOP-76QMG9DE`), suggesting a lower bound of at least 4 people or workstations involved — but this is an inference from naming convention, not a verified headcount, and should not be reported as a confirmed figure.
+
+**Why this matters for automation scoping:** headcount affects rollout risk (how many people need retraining/communication if `5132_pi` is automated) and change-management planning, but does not affect the automation candidate ranking itself, which is based on process volume and time consumption rather than operator count.
+
 ## 4. In-Depth Handling Pattern & Variance Analysis
 
 ### The Dual-Layer Variance Disconnect
@@ -76,7 +86,8 @@ Label      | BackdatedCV  | RawClickCV  | AvgBackdate(s)  | Matched
 ### Critical Findings
 * **Human Pre-Click Review Dwell ($CV_{\text{backdated}}$):** The high overall variance is caused entirely by human reading time in external reference files (`expense_calc.xlsx`, `shinkui_keiyaku_tetsuzuki.docx`) prior to field focus.
 * **Deterministic UI Form Filling ($CV_{\text{raw}}$):** Once an operator clicks into the input field (`pi-note`), interaction variance collapses across all 12 processes, with 10 of 12 labels showing $CV_{\text{raw}} < 0.08$. This proves that in-portal handling patterns are overwhelmingly deterministic, linear, and rule-based, with zero underlying UI branching for the large majority of processes.
-* **Exception — `5134_pi` and `5134_la`:** These two Logistics processes retain elevated $CV_{\text{raw}}$ (0.186 and 0.400 respectively) even after isolating click-to-submit time, indicating genuine interaction-level variance — likely secondary validation modals or variable network response delays on Port 5134 (see Section 5, Recommendation #3).
+* **Exception — `5134_pi` and `5134_la`:** These two Logistics processes retain elevated $CV_{\text{raw}}$ (0.186 and 0.400 respectively) even after isolating click-to-submit time, indicating genuine interaction-level variance.
+  * **Update:** This was root-caused by inspecting the top 5 slowest raw-click transactions per label event-by-event (`check_5134_variance.py`). No modal-related events, extra clicks, or navigation/network-wait patterns were found in any sample. Instead, every slow-tail transaction (both labels, 10 total) shows a consistent **~1.5–2.0 second gap between the field-input event (`clipboard_change`/`keystroke`) and `browser_form_input` firing** — remarkably tight across sessions and operators (e.g. 1.97s, 1.94s, 1.49s), which argues against variable network latency and instead points to a **fixed client-side debounce or field-validation delay** on these screens. This is a predictable, bounded behavior, not a structural UI branch or unpredictable condition — see revised feasibility assessment in Section 5, Recommendation #3.
 
 ### Row-Level Slow-Tail Validation
 The three processes with the highest $CV_{\text{backdated}}$ — `5133_pi` (0.530), `5132_ob` (0.439), and `5133_rt` (0.405) — were flagged for a bimodal handling-pattern check: does the high backdated variance reflect a genuine second workflow branch, or is it explained entirely by human reading-time variance?
@@ -128,15 +139,15 @@ Using `step2c_slow_tail_check.py`, each label's p90+ transactions were isolated 
 #### #1 Recommendation: Process `5132_pi` (Payroll / Salary Change Registration) — Priority: High
 * **Volume & Reach:** Leads the dataset with **129 executions** across **11 of 15 recording sessions** (73.3% operator reach).
 * **Time Recovery:** Consumes **11.62 active minutes** (20.6% of all recorded portal work). Automating this process recovers more time than all Port 5134 processes combined.
-* **Automation Feasibility:** $CV_{\text{raw}} = 0.053$ confirms strict interaction standardization. Direct injection into the DOM or API layer reduces cycle time from 5.40s down to $<0.05\text{s}$ per transaction (**96.3% labor reduction**).
+* **Automation Feasibility:** $CV_{\text{raw}} = 0.053$ confirms strict interaction standardization. Direct injection into the DOM or API layer reduces the mechanical click-to-submit step from **2.80s to <0.05s (~98% reduction)** on the portion of the task the automation actually replaces. The backdated mean of 5.40s also includes an average **2.60s of pre-click reference-lookup/reading time** (see Section 4), which is not eliminated by this automation as scoped — that time remains manual work unless a future phase also automates data retrieval (see Final Report, Section 3: "Remaining Manual Work"). Reporting the reduction against the full 5.40s would overstate labor savings by counting time the automation doesn't touch.
 
 #### #2 Recommendation: Process `5133_rt` (Purchase Order Management) — Priority: Medium
 * **Volume & Reach:** 77 executions across 9 sessions (6.38 active minutes).
 * **Feasibility:** Ultra-low raw click variance ($CV_{\text{raw}} = 0.052$), confirmed at the row level even for slow-tail transactions. Safe candidate for secondary batch automation.
 
-#### #3 Recommendation: Process `5134_pi` (Inventory Adjustment) — Priority: Low / Conditional
-* **Volume & Reach:** 66 executions across 9 sessions (6.20 active minutes).
-* **Feasibility Concerns:** Exhibits higher raw interaction variance ($CV_{\text{raw}} = 0.186$), indicating secondary validation modals or variable network response delays on Port 5134. Requires additional exception-handling logic before prototyping. `5134_la` (Contract Management, $CV_{\text{raw}} = 0.400$) shows the same pattern more severely and should be deprioritized until root-caused separately.
+#### #3 Recommendation: Process `5134_pi` / `5134_la` (Inventory Adjustment / Contract Management) — Priority: Medium
+* **Volume & Reach:** `5134_pi`: 66 executions across 9 sessions (6.20 active minutes). `5134_la`: 58 executions across 8 sessions (3.96 active minutes).
+* **Feasibility:** Elevated raw interaction variance ($CV_{\text{raw}} = 0.186$ and $0.400$ respectively) was root-caused via row-level event inspection rather than assumed. No validation modal or network-dependent behavior was found in any sampled transaction; the variance is fully explained by a consistent ~1.5–2.0s client-side delay before `browser_form_input` registers. **Revised recommendation:** both processes remain valid automation candidates. Implementation requires only a short (~2s) wait step after field input before triggering submit — not additional exception-handling logic. Priority upgraded from Low/Conditional to **Medium**, in line with `5133_rt`.
 
 ---
 
