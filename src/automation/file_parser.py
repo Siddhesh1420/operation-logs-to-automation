@@ -25,8 +25,6 @@ from typing import Any, Dict, List
 
 SUPPORTED_SUFFIXES = {".jsonl", ".json", ".csv", ".tsv", ".xlsx", ".xls"}
 
-# Fields the automator reads off each record. Timestamp fields are
-# normalised to ISO-8601 strings on ingestion (see _normalise_record).
 TIMESTAMP_FIELDS = ("start", "end")
 
 
@@ -47,7 +45,6 @@ def _normalise_record(record: Dict[str, Any]) -> Dict[str, Any]:
         value = record.get(field)
         if value is None or isinstance(value, str):
             continue
-        # datetime, date and pandas.Timestamp all expose isoformat().
         isoformat = getattr(value, "isoformat", None)
         if callable(isoformat):
             record[field] = isoformat()
@@ -78,19 +75,12 @@ def parse_incoming_file(
     last_error = None
 
     for _attempt in range(retries):
-        # Reset per attempt. Without this, a partial read followed by a
-        # retry re-appends the rows already collected, silently inflating
-        # the record count (confirmed: a .jsonl with one malformed line
-        # returned 9 records instead of 4).
         records: List[Dict[str, Any]] = []
 
         try:
-            # A zero-byte stat means the writer has not flushed yet.
             if path.stat().st_size == 0:
                 time.sleep(delay)
                 continue
-
-            # utf-8-sig transparently strips the Windows UTF-8 BOM.
             if suffix == ".jsonl":
                 with open(path, "r", encoding="utf-8-sig") as f:
                     for line in f:
@@ -120,19 +110,14 @@ def parse_incoming_file(
                 return [_normalise_record(r) for r in records
                         if isinstance(r, dict)]
 
-            # Parsed cleanly but empty: a genuinely empty file, not a
-            # mid-write race. Retrying would not change the result.
             print(f"[PARSER] {path.name} contained no records.")
             return []
 
         except (PermissionError, OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            # Expected during a mid-write race -- back off and retry.
             last_error = exc
             time.sleep(delay)
 
-        except Exception as exc:  # deliberately broad: surface real defects
-            # Anything else is a real defect. Surface it rather than
-            # letting the watcher report a silent zero.
+        except Exception as exc: 
             print(f"[PARSER] Unexpected {type(exc).__name__} reading "
                   f"{path.name}: {exc}")
             return []

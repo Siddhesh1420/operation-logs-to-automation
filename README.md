@@ -1,3 +1,13 @@
+## Student Information
+- Name: Siddhesh Bansal
+- University: Indian Institute of Technology Bhilai
+- Department- Computer Science and Engineering
+- Branch- Data Science and Artificial Intelligence 
+- Email address- siddheshb@iitbhilai.ac.in
+
+
+
+
 # Operation Logs → Automation Proposal
 
 FDE intern selection task. Recovers units of work from raw PC operation
