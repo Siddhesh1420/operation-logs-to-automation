@@ -45,12 +45,7 @@ class HR5132PIAutomator:
 
     def __init__(self, target_host: str = "http://127.0.0.1:5132"):
         self.target_host = target_host
-        # FIXED: use the isolated raw click-to-submit time (the part this
-        # automation actually replaces), not the backdated mean (which
-        # includes human reading time the automation does not touch).
         self.human_in_portal_raw_sec = 2.80
-        # Simulated injection latency. Named so the reported speedup
-        # factor cannot drift from the value actually slept on.
         self.simulated_injection_sec = 0.015
 
     def execute_transaction(self, case_id: str, note_text: str,
@@ -75,9 +70,6 @@ class HR5132PIAutomator:
             "timestamp_iso": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
-        # Simulated injection latency -- NOT a real network/DOM call.
-        # Acceptable for prototype scope; flagged here so it's never
-        # mistaken for a measured result against a live system.
         time.sleep(self.simulated_injection_sec)
 
         elapsed_sec = time.perf_counter() - t_start
@@ -104,14 +96,11 @@ class HR5132PIAutomator:
 
         results = []
         total_saved_vs_raw_sec = 0.0
-        total_real_human_sec = 0.0  # sum of ACTUAL backdated durations, not count*avg
+        total_real_human_sec = 0.0  
 
         for idx, seg in enumerate(pi_segments, 1):
             case_id = f"PAY-2026-{idx:04d}"
 
-            # FIXED: compute this segment's real duration instead of using
-            # a hardcoded constant, so aggregate totals are traceable to
-            # the validated segments.jsonl figures.
             real_dur_sec = None
             if "start" in seg and "end" in seg:
                 real_dur_sec = (parse_iso(seg["end"]) - parse_iso(seg["start"])).total_seconds()
@@ -130,11 +119,8 @@ class HR5132PIAutomator:
         return {
             "process_target": "5132_pi (Payroll / Salary Change Registration)",
             "total_records_processed": total_records,
-            # Traceable to segments.jsonl -- should match step2_analysis.md (11.62 min)
             "total_active_minutes_actual_human_time": round(total_real_human_sec / 60, 4),
             "aggregate_automated_hours_consumed": round(total_auto_time_sec / 3600, 4),
-            # Renamed from "recovered" -- this is projected savings on the
-            # mechanical click portion only, not time already saved.
             "projected_minutes_saved_vs_raw_click": round(total_saved_vs_raw_sec / 60, 2),
             "note_on_dwell_time": (
                 "This figure excludes ~2.60s/case of human reference-lookup "

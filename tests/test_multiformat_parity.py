@@ -21,8 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "automation"))
 
-from file_parser import parse_incoming_file  # noqa: E402
-from pi_5132_automator import HR5132PIAutomator  # noqa: E402
+from file_parser import parse_incoming_file 
+from pi_5132_automator import HR5132PIAutomator  
 
 FIELDS = ["session_id", "start", "end", "label"]
 
@@ -59,16 +59,9 @@ def write_formats(segments, out_dir):
         pd.DataFrame(segments).to_excel(p, index=False)
         paths["xlsx"] = p
 
-        # Hostile case: a file the client round-tripped through Excel.
-        # Excel cannot store timezone-aware datetimes, so it rewrites the
-        # ISO-8601 strings as native datetime cells and drops the UTC "Z".
-        # pandas then returns Timestamp objects where the automator expects
-        # strings. This used to raise ValueError; the parser now coerces
-        # them back to ISO strings on ingestion.
         hostile = pd.DataFrame(segments)
         for field in ("start", "end"):
             hostile[field] = pd.to_datetime(hostile[field]).dt.tz_localize(None)
-        # Reordered columns, plus an extra column the automator ignores.
         hostile["operator_note"] = "added by client"
         hostile = hostile[["label", "end", "operator_note", "start", "session_id"]]
         p = out_dir / "parity_excel_roundtrip.xlsx"

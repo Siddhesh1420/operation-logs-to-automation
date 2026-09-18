@@ -20,15 +20,12 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-# Allow execution both as a script and as a module, regardless of CWD.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from file_parser import parse_incoming_file, SUPPORTED_SUFFIXES  # noqa: E402
-from pi_5132_automator import HR5132PIAutomator  # noqa: E402
+from file_parser import parse_incoming_file, SUPPORTED_SUFFIXES  
+from pi_5132_automator import HR5132PIAutomator  
 
 DEFAULT_WATCH_DIR = "./incoming_data"
-# Excel is supported by the parser but intentionally not auto-triggered:
-# .xlsx duration handling is not yet load-tested (WORKLOG.md Day 6).
 WATCHED_SUFFIXES = SUPPORTED_SUFFIXES - {".xls"}
 
 
@@ -46,8 +43,6 @@ class UniversalPayrollHandler(FileSystemEventHandler):
         if file_path.suffix.lower() not in WATCHED_SUFFIXES:
             return
 
-        # A failure here must not kill the observer thread; a long-running
-        # watcher has to survive one bad file drop.
         try:
             print(f"\n[AUTO-TRIGGER] Detected {file_path.suffix} file: {file_path.name}")
 
@@ -66,7 +61,7 @@ class UniversalPayrollHandler(FileSystemEventHandler):
                 f"Projected saved (raw click only): "
                 f"{summary.get('projected_minutes_saved_vs_raw_click', 0)} min"
             )
-        except Exception as exc:  # deliberately broad: keep the watcher alive
+        except Exception as exc:  
             print(f"[AUTO-TRIGGER] FAILED on {file_path.name}: "
                   f"{type(exc).__name__}: {exc}")
 

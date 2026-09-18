@@ -209,7 +209,7 @@ def path1_click_id_segments(events, session_id, backdate_lookback_sec=30):
     Path 1: Walk browser_click events in order and pair {screen}-note (open) with
     btn-{screen}-ok (close) clicks, per screen, to emit segments.
     """
-    open_segments = {}  # screen -> (raw note-click timestamp, host/port)
+    open_segments = {}  
     last_segment_end = None
     claimed_app_switches = set()
     segments = []
@@ -293,12 +293,12 @@ def path2_coordinate_cluster_segments(events, session_id, backdate_lookback_sec=
                 ev_next = events[j]
                 if ev_next.get("event_type") == "mouse_click":
                     payload = ev_next.get("payload") or {}
-                    # Corrected extraction path for L2 mouse_click events:
                     coords = payload.get("coordinates") or payload.get("click_coordinates") or payload.get("position") or {}
                     x = coords.get("x", 0)
                     y = coords.get("y", 0)
 
                     # Submit button cluster target: x in [590, 670], y in [1845, 1885]
+                    
                     if 590 <= x <= 670 and 1845 <= y <= 1885:
                         submit_event = ev_next
                         i = j
