@@ -677,3 +677,112 @@ Build and debug the Step 3 automation prototype (`5132_pi`), verify its output a
 
 ### AI Usage Note
 Used Claude (chat) throughout Day 6 to review the prototype against corrected Step 2 figures, diagnose the 11.58 vs. 11.62 discrepancy, and debug the watcher/parser multi-file failure. Two real bugs were found and fixed in code Claude had not written or reviewed until this session (the watcher's stale field-name reference, and the parser's un-reset `records` list across retries) — both were caught by insisting on tracing every printed number back to a known-correct source rather than accepting plausible-looking output, consistent with the standard applied throughout Days 1–5.
+---
+
+## Day 7 — 2026-09-18
+
+### Goal
+Repository cleanup and correctness audit before submission: run every entry
+point end-to-end, fix anything that errors, remove dead code, and close the
+multi-format verification item left open on Day 6.
+
+---
+
+### What we did
+
+* **Audited the whole repository statically and dynamically.** Ran `pyflakes`
+  across `src/`, compiled every module, and executed every documented entry
+  point (both segmenters, all four analysis scripts, the automator in batch
+  and single-case mode, and the file watcher) rather than assuming they still
+  ran after six days of edits.
+* **Built a synthetic Dataset B fixture** covering both segmenter paths (an L3
+  session including the known stray-duplicate-OK case, and a no-L3 session
+  requiring coordinate clustering plus window-title port resolution), so the
+  detector can be smoke-tested without shipping real data.
+* **Closed the Day 6 open item on multi-format ingestion.** Added
+  `tests/test_multiformat_parity.py`, which writes the full validated
+  `segments.jsonl` out to every supported format, runs each back through the
+  parser and automator, and asserts identical aggregate output.
+* **Normalised line endings** and added `.gitattributes`. Editing on Windows
+  had been rewriting every line of every file, so real changes were buried in
+  whole-file diffs.
+
+### Key findings
+
+1. **The parser's retry accumulator bug was still present**, despite Day 6
+   recording it as fixed. Reproduced directly: a `.jsonl` file containing one
+   malformed line returned **9 records instead of 4**, because `records = []`
+   was initialised outside the retry loop and good lines were re-appended on
+   every attempt. In the automation path this would have silently inflated
+   transaction counts and reported time savings. Fixed by resetting the
+   accumulator per attempt; the same fixture now returns 0 records with an
+   explicit failure message instead of 9 duplicates.
+2. **The watcher's `on_created` had no exception handling**, also recorded as
+   fixed on Day 6 but absent in the committed code. A parse failure inside the
+   callback would kill the observer thread silently, leaving the watcher
+   running but deaf. Fixed, and verified by dropping a deliberately malformed
+   file: the watcher now reports the failure and keeps serving subsequent
+   drops.
+3. **`watchdog` was missing from `requirements.txt`** while `numpy`,
+   `matplotlib` and `scipy` were declared but imported nowhere. A fresh clone
+   following the documented setup would have crashed on
+   `import watchdog`. Corrected to the three packages actually imported
+   (`watchdog`, `pandas`, `openpyxl`).
+4. **Excel round-trips break ingestion — found by testing, not by reading.**
+   Excel cannot store timezone-aware datetimes, so a client round-tripping a
+   file through it gets native datetime cells with the UTC `Z` dropped;
+   `pandas.read_excel` then returns `Timestamp` objects where the automator
+   expects strings, raising `ValueError` on every record. The parser now
+   coerces timestamp fields back to ISO-8601 strings on ingestion. Durations
+   survive intact because both endpoints lose the same marker and the
+   arithmetic is a subtraction; only the absolute UTC anchor is lost, which
+   nothing in this pipeline depends on.
+5. **All six format fixtures now agree exactly** — 681 records in, 129 matched
+   `5132_pi` segments, 11.6165 minutes — including the hostile Excel
+   round-trip fixture with reordered columns and an extra client-added column.
+   This confirms the Day 6 suspicion that the earlier inconsistent result
+   (zero real duration alongside a non-zero projected saving) was degenerate
+   placeholder test data, not a parser defect.
+6. **`README.md` was six days stale**, still stating "Day 1 complete... No
+   segmentation code written yet" as the repository's front page. Rewritten
+   with the actual deliverables, results, run instructions and limitations.
+7. **`src/segmentation/load_events.py` was dead code** — imported by nothing,
+   referenced in no document, and duplicated by per-script loaders in each
+   analysis module. Removed; git history retains it.
+
+### Decisions made
+
+* **Report Risk 5 as partially closed rather than solved.** The Excel failure
+  mode is fixed and regression-tested, but every fixture is still authored by
+  this pipeline. Localised date formats and local-timezone timestamps remain
+  unexercised, and a timezone mismatch is the more dangerous case because it
+  would produce plausible but wrong durations rather than crashing. Risk 5 was
+  rewritten to separate what is now verified from what genuinely remains.
+* **Did not refactor the duplicated `load_events` helpers** across the four
+  analysis scripts. Each is a handful of lines, they are working and
+  independently verified, and consolidating them days before submission would
+  risk breaking validated numbers for a cosmetic gain.
+* **Left the simulated submission step as-is.** It is an accepted prototype
+  scope decision (Day 6), documented in the module docstring and in final
+  report Sections 2 and 4 — distinct from the defects above, which produced
+  numbers inconsistent with the reports and were fixed regardless.
+
+### Verification performed
+
+| Check | Result |
+|---|---|
+| `pyflakes src/ tests/` | clean |
+| `segments.jsonl` schema, timestamps, overlaps | 681 segments, 15 sessions, 12 labels, 0 schema violations, 0 bad timestamps, 0 overlaps |
+| Dataset B detector, both paths | back-dating correct, stray-OK handled, coordinate fallback resolves port |
+| Automator vs. reports | 129 segments, 11.6165 min, 186.7x — matches `step2_analysis.md` exactly |
+| Watcher: valid `.jsonl`, valid `.csv`, malformed file | processes both, survives the malformed drop with a visible error |
+| Multi-format parity (6 fixtures) | all agree |
+| `datetime.utcnow()` deprecation | removed; runs clean under `-W error::DeprecationWarning` |
+
+### AI usage note
+Used Claude (chat) on Day 7 to audit the repository, reproduce and fix the
+parser and watcher defects, design the multi-format parity test, and rewrite
+the stale README. The two defects in findings 1 and 2 had been recorded as
+fixed on Day 6 but were not present in the committed code; both were caught by
+re-running the failing scenario rather than trusting the log, consistent with
+the standard applied since Day 1.

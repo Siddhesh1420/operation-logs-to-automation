@@ -31,8 +31,9 @@ NOTE ON BASELINE (fixed 2026-09-17):
 import argparse
 import json
 import os
-from datetime import datetime
-from typing import Any, Dict, List
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 
 def parse_iso(ts: str) -> datetime:
@@ -48,9 +49,12 @@ class HR5132PIAutomator:
         # automation actually replaces), not the backdated mean (which
         # includes human reading time the automation does not touch).
         self.human_in_portal_raw_sec = 2.80
+        # Simulated injection latency. Named so the reported speedup
+        # factor cannot drift from the value actually slept on.
+        self.simulated_injection_sec = 0.015
 
     def execute_transaction(self, case_id: str, note_text: str,
-                             human_actual_sec: float = None) -> Dict[str, Any]:
+                             human_actual_sec: Optional[float] = None) -> Dict[str, Any]:
         """
         Simulates direct API / DOM payload submission to Port 5132.
 
@@ -60,7 +64,6 @@ class HR5132PIAutomator:
         compare against the raw click-to-submit baseline, not this value,
         since that raw baseline is what the automation mechanically replaces.
         """
-        import time
         t_start = time.perf_counter()
 
         payload = {
@@ -69,13 +72,13 @@ class HR5132PIAutomator:
             "field_automation_id": "pi-note",
             "content": note_text,
             "submit_action": "pi-ok",
-            "timestamp_iso": datetime.utcnow().isoformat() + "Z",
+            "timestamp_iso": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
         # Simulated injection latency -- NOT a real network/DOM call.
         # Acceptable for prototype scope; flagged here so it's never
         # mistaken for a measured result against a live system.
-        time.sleep(0.015)
+        time.sleep(self.simulated_injection_sec)
 
         elapsed_sec = time.perf_counter() - t_start
         baseline = self.human_in_portal_raw_sec
@@ -139,7 +142,7 @@ class HR5132PIAutomator:
                 "step2_analysis.md Section 5, Recommendation #1)."
             ),
             "average_speedup_factor_vs_raw_click": round(
-                self.human_in_portal_raw_sec / 0.015, 1
+                self.human_in_portal_raw_sec / self.simulated_injection_sec, 1
             ) if total_records > 0 else 0,
             "sample_execution_record": results[0] if results else {},
         }

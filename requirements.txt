@@ -1,4 +1,7 @@
-pandas>=2.0.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-scipy>=1.10.0
+# Runtime dependencies.
+# Step 1 (segmentation) and Step 2 (analysis) use only the standard library.
+# The dependencies below are required by Step 3 (automation prototype).
+
+watchdog>=3.0.0      # file_watcher.py: OS-level filesystem event monitoring
+pandas>=2.0.0        # file_parser.py: .xlsx / .xls ingestion
+openpyxl>=3.1.0      # pandas engine for .xlsx (required transitively)

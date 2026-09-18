@@ -128,7 +128,7 @@ def main(dataset_b_dir, segments_path, target_label):
         pct = 100 * v / total_all if total_all else 0
         print(f"  {k:<18}: {v:.1f}s ({pct:.1f}%)")
 
-    print(f"\n=== Sample segments (first 15) ===")
+    print("\n=== Sample segments (first 15) ===")
     for sid, w, buckets in per_segment_rows:
         print(f"  {sid} | window={w:.2f}s | {buckets}")
 

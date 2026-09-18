@@ -1,0 +1,9 @@
+# Normalise line endings in the repository to LF.
+# Without this, editing on Windows rewrites every line of every file,
+# producing diffs that hide the real changes.
+* text=auto
+
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.jsonl text eol=lf
